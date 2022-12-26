@@ -151,7 +151,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	resourceName := "example-pulp"
 
 	goApi := "repo-manager.pulpproject.org/v1alpha1"
-	goKind := "Pulp"
+	goKind := "pulps"
 
 	ctx := context.TODO()
 
@@ -164,7 +164,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		DoRaw(ctx)
 
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to find old Pulp CR:", err)
 		return
 	}
 
@@ -180,14 +180,52 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		fmt.Printf("%v: %v\n", ansibleCRDTypes.Field(i).Name, ansibleCRDValues.Field(i))
 	}
 
+	apiResources := corev1.ResourceRequirements{}
+	if ansiblePulp.Spec.Api.ResourceRequirements != nil {
+		apiResources = *ansiblePulp.Spec.Api.ResourceRequirements
+	}
+	contentResources := corev1.ResourceRequirements{}
+	if ansiblePulp.Spec.Content.ResourceRequirements != nil {
+		contentResources = *ansiblePulp.Spec.Content.ResourceRequirements
+	}
+	workerResources := corev1.ResourceRequirements{}
+	if ansiblePulp.Spec.Worker.ResourceRequirements != nil {
+		workerResources = *ansiblePulp.Spec.Worker.ResourceRequirements
+	}
+	webResources := corev1.ResourceRequirements{}
+	if ansiblePulp.Spec.Web.ResourceRequirements != nil {
+		webResources = *ansiblePulp.Spec.Web.ResourceRequirements
+	}
+	dbResources := corev1.ResourceRequirements{}
+	if ansiblePulp.Spec.PostgresResourceRequirements != nil {
+		dbResources = *ansiblePulp.Spec.PostgresResourceRequirements
+	}
+
+	apiStrategy := appsv1.DeploymentStrategy{}
+	if ansiblePulp.Spec.Api.Strategy != nil {
+		apiStrategy = *ansiblePulp.Spec.Api.Strategy
+	}
+	contentStrategy := appsv1.DeploymentStrategy{}
+	if ansiblePulp.Spec.Content.Strategy != nil {
+		contentStrategy = *ansiblePulp.Spec.Content.Strategy
+	}
+	workerStrategy := appsv1.DeploymentStrategy{}
+	if ansiblePulp.Spec.Worker.Strategy != nil {
+		workerStrategy = *ansiblePulp.Spec.Worker.Strategy
+	}
+	cacheStrategy := appsv1.DeploymentStrategy{}
+	if ansiblePulp.Spec.Web.Strategy != nil {
+		cacheStrategy = *ansiblePulp.Spec.Redis.Strategy
+	}
+
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: goApi,
-			Kind:       goKind,
+			Kind:       "Pulp",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ansiblePulp.Metadata.Name,
-			Namespace: ansiblePulp.Metadata.Namespace,
+			Name:      resourceName,
+			Namespace: namespace,
 		},
 		Spec: repomanagerv1alpha1.PulpSpec{
 			DeploymentType:           ansiblePulp.Spec.DeploymentType,
@@ -227,11 +265,11 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
 				GunicornTimeout:           ansiblePulp.Spec.GunicornTimeout,
 				GunicornWorkers:           ansiblePulp.Spec.GunicornAPIWorkers,
-				//ResourceRequirements:      *ansiblePulp.Spec.Api.ResourceRequirements,
-				ReadinessProbe: nil,
-				LivenessProbe:  nil,
-				PDB:            nil,
-				//Strategy:       *ansiblePulp.Spec.Api.Strategy,
+				ResourceRequirements:      apiResources,
+				ReadinessProbe:            nil,
+				LivenessProbe:             nil,
+				PDB:                       nil,
+				Strategy:                  apiStrategy,
 				//Affinity: ansiblePulp.Spec.Affinity,
 				//NodeSelector: ansiblePulp.Spec.NodeSelector,
 			},
@@ -241,11 +279,11 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
 				GunicornTimeout:           ansiblePulp.Spec.GunicornTimeout,
 				GunicornWorkers:           ansiblePulp.Spec.GunicornContentWorkers,
-				ResourceRequirements:      *ansiblePulp.Spec.Content.ResourceRequirements,
+				ResourceRequirements:      contentResources,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				PDB:                       nil,
-				Strategy:                  *ansiblePulp.Spec.Content.Strategy,
+				Strategy:                  contentStrategy,
 				//Affinity: ansiblePulp.Spec.Affinity,
 				//NodeSelector: ansiblePulp.Spec.NodeSelector,
 			},
@@ -253,17 +291,17 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 				Replicas:                  ansiblePulp.Spec.Worker.Replicas,
 				Tolerations:               ansiblePulp.Spec.Tolerations,
 				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
-				ResourceRequirements:      *ansiblePulp.Spec.Worker.ResourceRequirements,
+				ResourceRequirements:      workerResources,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				PDB:                       nil,
-				Strategy:                  *ansiblePulp.Spec.Worker.Strategy,
+				Strategy:                  workerStrategy,
 				//Affinity: ansiblePulp.Spec.Affinity,
 				//NodeSelector: ansiblePulp.Spec.NodeSelector,
 			},
 			Web: repomanagerv1alpha1.Web{
 				Replicas:             ansiblePulp.Spec.Web.Replicas,
-				ResourceRequirements: *ansiblePulp.Spec.Worker.ResourceRequirements,
+				ResourceRequirements: webResources,
 				ReadinessProbe:       nil,
 				LivenessProbe:        nil,
 				PDB:                  nil,
@@ -277,7 +315,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 				PostgresDataPath:            ansiblePulp.Spec.PostgresDataPath,
 				PostgresInitdbArgs:          ansiblePulp.Spec.PostgresInitdbArgs,
 				PostgresHostAuthMethod:      ansiblePulp.Spec.PostgresHostAuthMethod,
-				ResourceRequirements:        *ansiblePulp.Spec.PostgresResourceRequirements,
+				ResourceRequirements:        dbResources,
 				PostgresStorageRequirements: ansiblePulp.Spec.PostgresStorageRequirements,
 				PostgresStorageClass:        ansiblePulp.Spec.PostgresStorageClass,
 				ReadinessProbe:              nil,
@@ -299,7 +337,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 				Affinity:                  nil,
 				Tolerations:               nil,
 				NodeSelector:              nil,
-				Strategy:                  *ansiblePulp.Spec.Redis.Strategy,
+				Strategy:                  cacheStrategy,
 				//ExternalCacheSecret: "",
 				//Enabled: true,
 				//RedisPort: 6379,
@@ -309,21 +347,31 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	}
 	body, err := json.Marshal(pulpNew)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to serialize new Pulp CR:", err)
 		return
 	}
 
-	data, err = clientset.RESTClient().
+	fmt.Println("Trying to create the following CR:", string(body))
+
+	if data, err = clientset.RESTClient().
+		Get().
+		AbsPath("/apis/" + goApi).
+		DoRaw(context.TODO()); err != nil {
+		fmt.Println("Could not find go CRD:", err)
+	} else {
+		fmt.Println("CRD:", string(data))
+	}
+
+	_, err = clientset.RESTClient().
 		Post().
-		AbsPath("/apis/" + goApi + "/namespaces/" + ansiblePulp.Metadata.Namespace + "/" + goKind).
+		AbsPath("/apis/" + goApi + "/namespaces/" + namespace + "/" + goKind).
 		Body(body).
 		DoRaw(context.TODO())
 
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to create new Pulp CR:", err)
 		return
 	}
-	fmt.Println(data)
 }
 
 func main() {
