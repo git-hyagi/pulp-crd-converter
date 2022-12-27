@@ -112,6 +112,7 @@ type Api struct {
 	ResourceRequirements *corev1.ResourceRequirements `json:"resource_requirements,omitempty"`
 	Strategy             *appsv1.DeploymentStrategy   `json:"strategy,omitempty"`
 }
+
 type Content struct {
 	LogLevel             string                       `json:"log_level,omitempty"`
 	Replicas             int32                        `json:"replicas,omitempty"`
@@ -169,9 +170,6 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	}
 
 	json.Unmarshal(data, &ansiblePulp)
-	//fmt.Println(ansiblePulp.ApiVersion)
-	//fmt.Println(ansiblePulp.Kind)
-	//fmt.Println(ansiblePulp.Metadata)
 	fmt.Println(ansiblePulp.Spec)
 
 	ansibleCRDValues := reflect.ValueOf(ansiblePulp.Spec)
@@ -218,6 +216,11 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		cacheStrategy = *ansiblePulp.Spec.Redis.Strategy
 	}
 
+	imagePullSecrets := ansiblePulp.Spec.ImagePullSecrets
+	if ansiblePulp.Spec.ImagePullSecret != "" {
+		imagePullSecrets = append(imagePullSecrets, ansiblePulp.Spec.ImagePullSecret)
+	}
+
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: goApi,
@@ -257,7 +260,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 			ImageWeb:                 ansiblePulp.Spec.ImageWeb,
 			ImageWebVersion:          ansiblePulp.Spec.ImageWebVersion,
 			AdminPasswordSecret:      ansiblePulp.Spec.AdminPasswordSecret,
-			ImagePullSecrets:         ansiblePulp.Spec.ImagePullSecrets,
+			ImagePullSecrets:         imagePullSecrets,
 			SSOSecret:                ansiblePulp.Spec.SSOSecret,
 			Api: repomanagerv1alpha1.Api{
 				Replicas:                  ansiblePulp.Spec.Api.Replicas,
