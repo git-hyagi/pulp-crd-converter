@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	repomanagerv1alpha1 "github.com/pulp/pulp-operator/api/v1alpha1"
@@ -492,13 +493,23 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 
 	fmt.Println("Create new CR:", string(body))
 
-	if data, err = clientset.RESTClient().
-		Get().
-		AbsPath("/apis/" + goApi).
-		DoRaw(context.TODO()); err != nil {
-		fmt.Println("Could not find go CRD:", err)
-	} else {
-		fmt.Println("CRD:", string(data))
+	retries := 10
+	for i := 0; i < retries; i++ {
+		if data, err = clientset.RESTClient().
+			Get().
+			AbsPath("/apis/" + goApi).
+			DoRaw(context.TODO()); err != nil {
+			fmt.Println("Could not find go CRD:", err)
+			time.Sleep(time.Second * 5)
+		} else {
+			fmt.Println("CRD:", string(data))
+			break
+		}
+	}
+
+	if retries == 10 {
+		fmt.Println("ERROR! Golang CRD not found!")
+		return
 	}
 
 	_, err = clientset.RESTClient().
