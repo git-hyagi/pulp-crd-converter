@@ -280,6 +280,7 @@ func deleteDeployments(clientset *kubernetes.Clientset) error {
 			DoRaw(ctx)
 		if err != nil {
 			fmt.Println("Failed to find", component, "deployment:", err)
+			return err
 		} else {
 			fmt.Println("Deleting", component, "deployment ...")
 		}
