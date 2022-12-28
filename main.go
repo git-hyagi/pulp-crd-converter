@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	repomanagerv1alpha1 "github.com/pulp/pulp-operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -145,17 +145,159 @@ type Worker struct {
 	Strategy             *appsv1.DeploymentStrategy   `json:"strategy,omitempty"`
 }
 
+func (ansiblePulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) {
+	subscriptionNamespace := "pulp"
+	ansibleSubscriptionName := "pulp-operator"
+	ctx := context.TODO()
+
+	fmt.Println("Retrieving the current csv ...")
+	data, err := clientset.RESTClient().
+		Get().
+		AbsPath("/apis/operators.coreos.com/v1alpha1").
+		Namespace(subscriptionNamespace).
+		Resource("subscriptions").
+		Name(ansibleSubscriptionName).
+		DoRaw(ctx)
+	if err != nil {
+		fmt.Println("Failed to find Subscription:", err)
+		return "", err
+	}
+	sub := &operatorsv1alpha1.Subscription{}
+	json.Unmarshal(data, sub)
+	currentCSV := sub.Status.CurrentCSV
+	fmt.Println("Current CSV Name:", currentCSV)
+	return currentCSV, nil
+}
+
+func (ansiblePulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
+	subscriptionNamespace := "pulp"
+	ansibleSubscriptionName := "pulp-operator"
+	ctx := context.TODO()
+
+	fmt.Println("Deleting ansible subscription ...")
+	data, err := clientset.RESTClient().
+		Delete().
+		AbsPath("/apis/operators.coreos.com/v1alpha1").
+		Namespace(subscriptionNamespace).
+		Resource("subscriptions").
+		Name(ansibleSubscriptionName).
+		DoRaw(ctx)
+	if err != nil {
+		fmt.Println("Failed to find Subscription:", err)
+		return err
+	}
+
+	fmt.Println(string(data))
+	return nil
+}
+
+func (ansiblePulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) error {
+	subscriptionNamespace := "pulp"
+	ctx := context.TODO()
+
+	fmt.Println("Deleting current CSV ...")
+	data, err := clientset.RESTClient().
+		Delete().
+		AbsPath("/apis/operators.coreos.com/v1alpha1").
+		Namespace(subscriptionNamespace).
+		Resource("clusterserviceversions").
+		Name(csvName).
+		DoRaw(ctx)
+	if err != nil {
+		fmt.Println("Failed to find Subscription:", err)
+		return err
+	}
+
+	fmt.Println(string(data))
+	return nil
+}
+
+func (ansiblePulp pulp) subscribe(clientset *kubernetes.Clientset) error {
+	subscriptionNamespace := "pulp"
+	subscriptionName := "pulp-operator"
+	subscriptionChannel := "beta"
+	installPlanApproval := "Automatic"
+	source := "community-operators"
+	sourceNamespace := "openshift-marketplace"
+	startingCSV := "pulp-operator.v1.0.0-alpha.4"
+	ctx := context.TODO()
+
+	fmt.Println("Subscribing to the new Operator version ...")
+	newSubscription := &operatorsv1alpha1.Subscription{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "operators.coreos.com/v1alpha1",
+			Kind:       "Subscription",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      subscriptionName,
+			Namespace: subscriptionNamespace,
+		},
+		Spec: &operatorsv1alpha1.SubscriptionSpec{
+			Channel:                subscriptionChannel,
+			InstallPlanApproval:    operatorsv1alpha1.Approval(installPlanApproval),
+			CatalogSource:          source,
+			CatalogSourceNamespace: sourceNamespace,
+			StartingCSV:            startingCSV,
+			Package:                subscriptionName,
+		},
+	}
+	body, err := json.Marshal(newSubscription)
+	if err != nil {
+		fmt.Println("Failed to serialize new Pulp CR:", err)
+		return err
+	}
+	fmt.Println(string(body))
+
+	data, err := clientset.RESTClient().
+		Post().
+		AbsPath("/apis/operators.coreos.com/v1alpha1").
+		Namespace(subscriptionNamespace).
+		Resource("subscriptions").
+		Name(subscriptionName).
+		Body(body).
+		DoRaw(ctx)
+	if err != nil {
+		fmt.Println("Failed to create Subscription:", err)
+		return err
+	}
+
+	fmt.Println(string(data))
+	return nil
+}
+
+func deleteDeployments(clientset *kubernetes.Clientset) error {
+	ctx := context.TODO()
+	namespace := "pulp"
+	components := []string{"api", "content-server", "worker", "webserver"}
+
+	for _, component := range components {
+		_, err := clientset.RESTClient().
+			Delete().
+			AbsPath("/apis/apps/v1").
+			Namespace(namespace).
+			Resource("deployments").
+			Param("labelSelector", "app.kubernetes.io/component="+component).
+			DoRaw(ctx)
+		if err != nil {
+			fmt.Println("Failed to find", component, "deployment:", err)
+		} else {
+			fmt.Println("Deleting", component, "deployment ...")
+		}
+	}
+	return nil
+}
+
 func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	api := "/apis/pulp.pulpproject.org/v1beta1"
 	namespace := "pulp"
 	resource := "pulps"
 	resourceName := "example-pulp"
-
 	goApi := "repo-manager.pulpproject.org/v1alpha1"
 	goKind := "pulps"
-
+	goResource := "Pulp"
 	ctx := context.TODO()
 
+	fmt.Println("Converting Pulp CR to the new CRD ...")
 	data, err := clientset.RESTClient().
 		Get().
 		AbsPath(api).
@@ -170,13 +312,6 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	}
 
 	json.Unmarshal(data, &ansiblePulp)
-	fmt.Println(ansiblePulp.Spec)
-
-	ansibleCRDValues := reflect.ValueOf(ansiblePulp.Spec)
-	ansibleCRDTypes := ansibleCRDValues.Type()
-	for i := 0; i < ansibleCRDValues.NumField(); i++ {
-		fmt.Printf("%v: %v\n", ansibleCRDTypes.Field(i).Name, ansibleCRDValues.Field(i))
-	}
 
 	apiResources := corev1.ResourceRequirements{}
 	if ansiblePulp.Spec.Api.ResourceRequirements != nil {
@@ -224,7 +359,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: goApi,
-			Kind:       "Pulp",
+			Kind:       goResource,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      resourceName,
@@ -354,7 +489,7 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		return
 	}
 
-	fmt.Println("Trying to create the following CR:", string(body))
+	fmt.Println("Create new CR:", string(body))
 
 	if data, err = clientset.RESTClient().
 		Get().
@@ -380,7 +515,28 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 func main() {
 	config := ctrl.GetConfigOrDie()
 	clientset := kubernetes.NewForConfigOrDie(config)
-
 	ansiblePulp := pulp{}
+
+	csvName, err := ansiblePulp.getCurrentCSV(clientset)
+	if err != nil {
+		return
+	}
+
+	if err := ansiblePulp.deleteSubscription(clientset); err != nil {
+		return
+	}
+
+	if err := ansiblePulp.deleteCSV(clientset, csvName); err != nil {
+		return
+	}
+
+	if err := deleteDeployments(clientset); err != nil {
+		return
+	}
+
+	if err := ansiblePulp.subscribe(clientset); err != nil {
+		return
+	}
+
 	ansiblePulp.convert(clientset)
 }
