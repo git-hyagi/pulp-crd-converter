@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -26,6 +27,25 @@ type pulp struct {
 	Metadata   metav1.ObjectMeta `json:"metadata"`
 	Spec       AnsibleSpec       `json:"spec"`
 	Status     any               `json:"status"`
+
+	oldSubscriptionName      string
+	oldSubscriptionNamespace string
+
+	newSubscriptionNamespace           string
+	newSubscriptionName                string
+	newSubscriptionChannel             string
+	newSubscriptionInstallPlanApproval string
+	newSubscriptionSource              string
+	newSubscriptionSourceNamespace     string
+	newSubscriptionStartingCSV         string
+
+	oldApi          string
+	oldResource     string
+	oldResourceName string
+	newApi          string
+	newKind         string
+	newResourceName string
+	newResource     string
 }
 
 type AnsibleSpec struct {
@@ -146,19 +166,15 @@ type Worker struct {
 	Strategy             *appsv1.DeploymentStrategy   `json:"strategy,omitempty"`
 }
 
-func (ansiblePulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) {
-	subscriptionNamespace := "pulp"
-	ansibleSubscriptionName := "pulp-operator"
-	ctx := context.TODO()
-
-	fmt.Println("Retrieving the current csv ...")
+func (pulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) {
+	fmt.Println("Retrieving the current csv from subscription" + pulp.oldSubscriptionName + "...")
 	data, err := clientset.RESTClient().
 		Get().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
-		Namespace(subscriptionNamespace).
+		Namespace(pulp.oldSubscriptionNamespace).
 		Resource("subscriptions").
-		Name(ansibleSubscriptionName).
-		DoRaw(ctx)
+		Name(pulp.oldSubscriptionName).
+		DoRaw(context.TODO())
 	if err != nil {
 		fmt.Println("Failed to find Subscription:", err)
 		return "", err
@@ -170,19 +186,15 @@ func (ansiblePulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, 
 	return currentCSV, nil
 }
 
-func (ansiblePulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
-	subscriptionNamespace := "pulp"
-	ansibleSubscriptionName := "pulp-operator"
-	ctx := context.TODO()
-
-	fmt.Println("Deleting ansible subscription ...")
+func (pulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
+	fmt.Println("Deleting" + pulp.oldSubscriptionName + "subscription ...")
 	data, err := clientset.RESTClient().
 		Delete().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
-		Namespace(subscriptionNamespace).
+		Namespace(pulp.oldSubscriptionNamespace).
 		Resource("subscriptions").
-		Name(ansibleSubscriptionName).
-		DoRaw(ctx)
+		Name(pulp.oldSubscriptionName).
+		DoRaw(context.TODO())
 	if err != nil {
 		fmt.Println("Failed to find Subscription:", err)
 		return err
@@ -192,18 +204,15 @@ func (ansiblePulp pulp) deleteSubscription(clientset *kubernetes.Clientset) erro
 	return nil
 }
 
-func (ansiblePulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) error {
-	subscriptionNamespace := "pulp"
-	ctx := context.TODO()
-
-	fmt.Println("Deleting current CSV ...")
+func (pulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) error {
+	fmt.Println("Deleting" + csvName + "CSV ...")
 	data, err := clientset.RESTClient().
 		Delete().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
-		Namespace(subscriptionNamespace).
+		Namespace(pulp.oldSubscriptionNamespace).
 		Resource("clusterserviceversions").
 		Name(csvName).
-		DoRaw(ctx)
+		DoRaw(context.TODO())
 	if err != nil {
 		fmt.Println("Failed to find Subscription:", err)
 		return err
@@ -213,16 +222,7 @@ func (ansiblePulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName strin
 	return nil
 }
 
-func (ansiblePulp pulp) subscribe(clientset *kubernetes.Clientset) error {
-	subscriptionNamespace := "pulp"
-	subscriptionName := "pulp-operator"
-	subscriptionChannel := "beta"
-	installPlanApproval := "Automatic"
-	source := "community-operators"
-	sourceNamespace := "openshift-marketplace"
-	startingCSV := "pulp-operator.v1.0.0-alpha.4"
-	ctx := context.TODO()
-
+func (pulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 	fmt.Println("Subscribing to the new Operator version ...")
 	newSubscription := &operatorsv1alpha1.Subscription{
 		TypeMeta: metav1.TypeMeta{
@@ -230,16 +230,16 @@ func (ansiblePulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 			Kind:       "Subscription",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      subscriptionName,
-			Namespace: subscriptionNamespace,
+			Name:      pulp.newSubscriptionName,
+			Namespace: pulp.newSubscriptionNamespace,
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
-			Channel:                subscriptionChannel,
-			InstallPlanApproval:    operatorsv1alpha1.Approval(installPlanApproval),
-			CatalogSource:          source,
-			CatalogSourceNamespace: sourceNamespace,
-			StartingCSV:            startingCSV,
-			Package:                subscriptionName,
+			Channel:                pulp.newSubscriptionChannel,
+			InstallPlanApproval:    operatorsv1alpha1.Approval(pulp.newSubscriptionInstallPlanApproval),
+			CatalogSource:          pulp.newSubscriptionSource,
+			CatalogSourceNamespace: pulp.newSubscriptionSourceNamespace,
+			StartingCSV:            pulp.newSubscriptionStartingCSV,
+			Package:                pulp.newSubscriptionName,
 		},
 	}
 	body, err := json.Marshal(newSubscription)
@@ -252,11 +252,11 @@ func (ansiblePulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 	data, err := clientset.RESTClient().
 		Post().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
-		Namespace(subscriptionNamespace).
+		Namespace(pulp.newSubscriptionNamespace).
 		Resource("subscriptions").
-		Name(subscriptionName).
+		Name(pulp.newSubscriptionName).
 		Body(body).
-		DoRaw(ctx)
+		DoRaw(context.TODO())
 	if err != nil {
 		fmt.Println("Failed to create Subscription:", err)
 		return err
@@ -266,19 +266,17 @@ func (ansiblePulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-func deleteDeployments(clientset *kubernetes.Clientset) error {
-	ctx := context.TODO()
-	namespace := "pulp"
+func (pulp pulp) deleteDeployments(clientset *kubernetes.Clientset) error {
 	components := []string{"api", "content-server", "worker", "webserver"}
 
 	for _, component := range components {
 		_, err := clientset.RESTClient().
 			Delete().
 			AbsPath("/apis/apps/v1").
-			Namespace(namespace).
+			Namespace(pulp.oldSubscriptionNamespace).
 			Resource("deployments").
 			Param("labelSelector", "app.kubernetes.io/component="+component).
-			DoRaw(ctx)
+			DoRaw(context.TODO())
 		if err != nil {
 			fmt.Println("Failed to find", component, "deployment:", err)
 			return err
@@ -289,23 +287,16 @@ func deleteDeployments(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
-	api := "/apis/pulp.pulpproject.org/v1beta1"
-	namespace := "pulp"
-	resource := "pulps"
-	resourceName := "example-pulp"
-	goApi := "repo-manager.pulpproject.org/v1alpha1"
-	goKind := "pulps"
-	goResource := "Pulp"
+func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 	ctx := context.TODO()
 
 	fmt.Println("Converting Pulp CR to the new CRD ...")
 	data, err := clientset.RESTClient().
 		Get().
-		AbsPath(api).
-		Namespace(namespace).
-		Resource(resource).
-		Name(resourceName).
+		AbsPath(pulp.oldApi).
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource(pulp.oldResource).
+		Name(pulp.oldResourceName).
 		DoRaw(ctx)
 
 	if err != nil {
@@ -313,165 +304,165 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		return
 	}
 
-	json.Unmarshal(data, &ansiblePulp)
+	json.Unmarshal(data, &pulp)
 
 	apiResources := corev1.ResourceRequirements{}
-	if ansiblePulp.Spec.Api.ResourceRequirements != nil {
-		apiResources = *ansiblePulp.Spec.Api.ResourceRequirements
+	if pulp.Spec.Api.ResourceRequirements != nil {
+		apiResources = *pulp.Spec.Api.ResourceRequirements
 	}
 	contentResources := corev1.ResourceRequirements{}
-	if ansiblePulp.Spec.Content.ResourceRequirements != nil {
-		contentResources = *ansiblePulp.Spec.Content.ResourceRequirements
+	if pulp.Spec.Content.ResourceRequirements != nil {
+		contentResources = *pulp.Spec.Content.ResourceRequirements
 	}
 	workerResources := corev1.ResourceRequirements{}
-	if ansiblePulp.Spec.Worker.ResourceRequirements != nil {
-		workerResources = *ansiblePulp.Spec.Worker.ResourceRequirements
+	if pulp.Spec.Worker.ResourceRequirements != nil {
+		workerResources = *pulp.Spec.Worker.ResourceRequirements
 	}
 	webResources := corev1.ResourceRequirements{}
-	if ansiblePulp.Spec.Web.ResourceRequirements != nil {
-		webResources = *ansiblePulp.Spec.Web.ResourceRequirements
+	if pulp.Spec.Web.ResourceRequirements != nil {
+		webResources = *pulp.Spec.Web.ResourceRequirements
 	}
 	dbResources := corev1.ResourceRequirements{}
-	if ansiblePulp.Spec.PostgresResourceRequirements != nil {
-		dbResources = *ansiblePulp.Spec.PostgresResourceRequirements
+	if pulp.Spec.PostgresResourceRequirements != nil {
+		dbResources = *pulp.Spec.PostgresResourceRequirements
 	}
 
 	apiStrategy := appsv1.DeploymentStrategy{}
-	if ansiblePulp.Spec.Api.Strategy != nil {
-		apiStrategy = *ansiblePulp.Spec.Api.Strategy
+	if pulp.Spec.Api.Strategy != nil {
+		apiStrategy = *pulp.Spec.Api.Strategy
 	}
 	contentStrategy := appsv1.DeploymentStrategy{}
-	if ansiblePulp.Spec.Content.Strategy != nil {
-		contentStrategy = *ansiblePulp.Spec.Content.Strategy
+	if pulp.Spec.Content.Strategy != nil {
+		contentStrategy = *pulp.Spec.Content.Strategy
 	}
 	workerStrategy := appsv1.DeploymentStrategy{}
-	if ansiblePulp.Spec.Worker.Strategy != nil {
-		workerStrategy = *ansiblePulp.Spec.Worker.Strategy
+	if pulp.Spec.Worker.Strategy != nil {
+		workerStrategy = *pulp.Spec.Worker.Strategy
 	}
 	cacheStrategy := appsv1.DeploymentStrategy{}
-	if ansiblePulp.Spec.Web.Strategy != nil {
-		cacheStrategy = *ansiblePulp.Spec.Redis.Strategy
+	if pulp.Spec.Web.Strategy != nil {
+		cacheStrategy = *pulp.Spec.Redis.Strategy
 	}
 
-	imagePullSecrets := ansiblePulp.Spec.ImagePullSecrets
-	if ansiblePulp.Spec.ImagePullSecret != "" {
-		imagePullSecrets = append(imagePullSecrets, ansiblePulp.Spec.ImagePullSecret)
+	imagePullSecrets := pulp.Spec.ImagePullSecrets
+	if pulp.Spec.ImagePullSecret != "" {
+		imagePullSecrets = append(imagePullSecrets, pulp.Spec.ImagePullSecret)
 	}
 
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: goApi,
-			Kind:       goResource,
+			APIVersion: pulp.newApi,
+			Kind:       pulp.newKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      resourceName,
-			Namespace: namespace,
+			Name:      pulp.newResourceName,
+			Namespace: pulp.newSubscriptionNamespace,
 		},
 		Spec: repomanagerv1alpha1.PulpSpec{
-			DeploymentType:           ansiblePulp.Spec.DeploymentType,
-			FileStorageSize:          ansiblePulp.Spec.FileStorageSize,
-			FileStorageAccessMode:    ansiblePulp.Spec.FileStorageAccessMode,
-			FileStorageClass:         ansiblePulp.Spec.FileStorageClass,
-			ObjectStorageAzureSecret: ansiblePulp.Spec.ObjectStorageAzureSecret,
-			ObjectStorageS3Secret:    ansiblePulp.Spec.ObjectStorageS3Secret,
-			DBFieldsEncryptionSecret: ansiblePulp.Spec.DBFieldsEncryptionSecret,
-			SigningSecret:            ansiblePulp.Spec.SigningSecret,
-			SigningScriptsConfigmap:  ansiblePulp.Spec.SigningScriptsConfigmap,
-			StorageType:              ansiblePulp.Spec.StorageType,
-			IngressType:              ansiblePulp.Spec.IngressType,
-			IngressAnnotations:       ansiblePulp.Spec.IngressAnnotations,
-			IngressTLSSecret:         ansiblePulp.Spec.IngressTLSSecret,
-			RouteHost:                ansiblePulp.Spec.RouteHost,
-			RouteTLSSecret:           ansiblePulp.Spec.RouteTLSSecret,
-			HAProxyTimeout:           ansiblePulp.Spec.HAProxyTimeout,
-			NginxMaxBodySize:         ansiblePulp.Spec.NginxMaxBodySize,
-			NginxProxyBodySize:       ansiblePulp.Spec.NginxMaxBodySize,
-			NginxProxyReadTimeout:    ansiblePulp.Spec.NginxProxyReadTimeout,
-			NginxProxyConnectTimeout: ansiblePulp.Spec.NginxProxyConnectTimeout,
-			NginxProxySendTimeout:    ansiblePulp.Spec.NginxProxySendTimeout,
-			ContainerTokenSecret:     ansiblePulp.Spec.ContainerTokenSecret,
-			Image:                    ansiblePulp.Spec.Image,
-			ImageVersion:             ansiblePulp.Spec.ImageVersion,
-			ImagePullPolicy:          ansiblePulp.Spec.ImagePullPolicy,
-			PulpSettings:             ansiblePulp.Spec.PulpSettings,
-			ImageWeb:                 ansiblePulp.Spec.ImageWeb,
-			ImageWebVersion:          ansiblePulp.Spec.ImageWebVersion,
-			AdminPasswordSecret:      ansiblePulp.Spec.AdminPasswordSecret,
+			DeploymentType:           pulp.Spec.DeploymentType,
+			FileStorageSize:          pulp.Spec.FileStorageSize,
+			FileStorageAccessMode:    pulp.Spec.FileStorageAccessMode,
+			FileStorageClass:         pulp.Spec.FileStorageClass,
+			ObjectStorageAzureSecret: pulp.Spec.ObjectStorageAzureSecret,
+			ObjectStorageS3Secret:    pulp.Spec.ObjectStorageS3Secret,
+			DBFieldsEncryptionSecret: pulp.Spec.DBFieldsEncryptionSecret,
+			SigningSecret:            pulp.Spec.SigningSecret,
+			SigningScriptsConfigmap:  pulp.Spec.SigningScriptsConfigmap,
+			StorageType:              pulp.Spec.StorageType,
+			IngressType:              pulp.Spec.IngressType,
+			IngressAnnotations:       pulp.Spec.IngressAnnotations,
+			IngressTLSSecret:         pulp.Spec.IngressTLSSecret,
+			RouteHost:                pulp.Spec.RouteHost,
+			RouteTLSSecret:           pulp.Spec.RouteTLSSecret,
+			HAProxyTimeout:           pulp.Spec.HAProxyTimeout,
+			NginxMaxBodySize:         pulp.Spec.NginxMaxBodySize,
+			NginxProxyBodySize:       pulp.Spec.NginxMaxBodySize,
+			NginxProxyReadTimeout:    pulp.Spec.NginxProxyReadTimeout,
+			NginxProxyConnectTimeout: pulp.Spec.NginxProxyConnectTimeout,
+			NginxProxySendTimeout:    pulp.Spec.NginxProxySendTimeout,
+			ContainerTokenSecret:     pulp.Spec.ContainerTokenSecret,
+			Image:                    pulp.Spec.Image,
+			ImageVersion:             pulp.Spec.ImageVersion,
+			ImagePullPolicy:          pulp.Spec.ImagePullPolicy,
+			PulpSettings:             pulp.Spec.PulpSettings,
+			ImageWeb:                 pulp.Spec.ImageWeb,
+			ImageWebVersion:          pulp.Spec.ImageWebVersion,
+			AdminPasswordSecret:      pulp.Spec.AdminPasswordSecret,
 			ImagePullSecrets:         imagePullSecrets,
-			SSOSecret:                ansiblePulp.Spec.SSOSecret,
+			SSOSecret:                pulp.Spec.SSOSecret,
 			Api: repomanagerv1alpha1.Api{
-				Replicas:                  ansiblePulp.Spec.Api.Replicas,
-				Tolerations:               ansiblePulp.Spec.Tolerations,
-				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
-				GunicornTimeout:           ansiblePulp.Spec.GunicornTimeout,
-				GunicornWorkers:           ansiblePulp.Spec.GunicornAPIWorkers,
+				Replicas:                  pulp.Spec.Api.Replicas,
+				Tolerations:               pulp.Spec.Tolerations,
+				TopologySpreadConstraints: pulp.Spec.TopologySpreadConstraints,
+				GunicornTimeout:           pulp.Spec.GunicornTimeout,
+				GunicornWorkers:           pulp.Spec.GunicornAPIWorkers,
 				ResourceRequirements:      apiResources,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				PDB:                       nil,
 				Strategy:                  apiStrategy,
-				//Affinity: ansiblePulp.Spec.Affinity,
-				//NodeSelector: ansiblePulp.Spec.NodeSelector,
+				//Affinity: pulp.Spec.Affinity,
+				//NodeSelector: pulp.Spec.NodeSelector,
 			},
 			Content: repomanagerv1alpha1.Content{
-				Replicas:                  ansiblePulp.Spec.Content.Replicas,
-				Tolerations:               ansiblePulp.Spec.Tolerations,
-				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
-				GunicornTimeout:           ansiblePulp.Spec.GunicornTimeout,
-				GunicornWorkers:           ansiblePulp.Spec.GunicornContentWorkers,
+				Replicas:                  pulp.Spec.Content.Replicas,
+				Tolerations:               pulp.Spec.Tolerations,
+				TopologySpreadConstraints: pulp.Spec.TopologySpreadConstraints,
+				GunicornTimeout:           pulp.Spec.GunicornTimeout,
+				GunicornWorkers:           pulp.Spec.GunicornContentWorkers,
 				ResourceRequirements:      contentResources,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				PDB:                       nil,
 				Strategy:                  contentStrategy,
-				//Affinity: ansiblePulp.Spec.Affinity,
-				//NodeSelector: ansiblePulp.Spec.NodeSelector,
+				//Affinity: pulp.Spec.Affinity,
+				//NodeSelector: pulp.Spec.NodeSelector,
 			},
 			Worker: repomanagerv1alpha1.Worker{
-				Replicas:                  ansiblePulp.Spec.Worker.Replicas,
-				Tolerations:               ansiblePulp.Spec.Tolerations,
-				TopologySpreadConstraints: ansiblePulp.Spec.TopologySpreadConstraints,
+				Replicas:                  pulp.Spec.Worker.Replicas,
+				Tolerations:               pulp.Spec.Tolerations,
+				TopologySpreadConstraints: pulp.Spec.TopologySpreadConstraints,
 				ResourceRequirements:      workerResources,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				PDB:                       nil,
 				Strategy:                  workerStrategy,
-				//Affinity: ansiblePulp.Spec.Affinity,
-				//NodeSelector: ansiblePulp.Spec.NodeSelector,
+				//Affinity: pulp.Spec.Affinity,
+				//NodeSelector: pulp.Spec.NodeSelector,
 			},
 			Web: repomanagerv1alpha1.Web{
-				Replicas:             ansiblePulp.Spec.Web.Replicas,
+				Replicas:             pulp.Spec.Web.Replicas,
 				ResourceRequirements: webResources,
 				ReadinessProbe:       nil,
 				LivenessProbe:        nil,
 				PDB:                  nil,
-				//Affinity: ansiblePulp.Spec.Affinity,
-				//NodeSelector: ansiblePulp.Spec.NodeSelector,
+				//Affinity: pulp.Spec.Affinity,
+				//NodeSelector: pulp.Spec.NodeSelector,
 			},
 			Database: repomanagerv1alpha1.Database{
 				Affinity:                    nil,
-				PostgresImage:               ansiblePulp.Spec.PostgresImage,
-				PostgresExtraArgs:           ansiblePulp.Spec.PostgresExtraArgs,
-				PostgresDataPath:            ansiblePulp.Spec.PostgresDataPath,
-				PostgresInitdbArgs:          ansiblePulp.Spec.PostgresInitdbArgs,
-				PostgresHostAuthMethod:      ansiblePulp.Spec.PostgresHostAuthMethod,
+				PostgresImage:               pulp.Spec.PostgresImage,
+				PostgresExtraArgs:           pulp.Spec.PostgresExtraArgs,
+				PostgresDataPath:            pulp.Spec.PostgresDataPath,
+				PostgresInitdbArgs:          pulp.Spec.PostgresInitdbArgs,
+				PostgresHostAuthMethod:      pulp.Spec.PostgresHostAuthMethod,
 				ResourceRequirements:        dbResources,
-				PostgresStorageRequirements: ansiblePulp.Spec.PostgresStorageRequirements,
-				PostgresStorageClass:        ansiblePulp.Spec.PostgresStorageClass,
+				PostgresStorageRequirements: pulp.Spec.PostgresStorageRequirements,
+				PostgresStorageClass:        pulp.Spec.PostgresStorageClass,
 				ReadinessProbe:              nil,
 				LivenessProbe:               nil,
 				//ExternalDBSecret: "",
 				//PostgresVersion: "",
 				//PostgresPort: 5432,
 				//PostgresSSLMode: "prefer",
-				//NodeSelector:           ansiblePulp.Spec.PostgresSelector,
-				//Tolerations: ansiblePulp.Spec.PostgresToleration,
+				//NodeSelector:           pulp.Spec.PostgresSelector,
+				//Tolerations: pulp.Spec.PostgresToleration,
 				//PVC:          "",
 			},
 			Cache: repomanagerv1alpha1.Cache{
-				RedisImage:                ansiblePulp.Spec.RedisImage,
-				RedisStorageClass:         ansiblePulp.Spec.RedisStorageClass,
-				RedisResourceRequirements: ansiblePulp.Spec.RedisResourceRequirements,
+				RedisImage:                pulp.Spec.RedisImage,
+				RedisStorageClass:         pulp.Spec.RedisStorageClass,
+				RedisResourceRequirements: pulp.Spec.RedisResourceRequirements,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
 				Affinity:                  nil,
@@ -494,12 +485,13 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 	fmt.Println("Create new CR:", string(body))
 
 	retries := 10
-	for i := 0; i < retries; i++ {
+	tried := 0
+	for ; tried < retries; tried++ {
 		if data, err = clientset.RESTClient().
 			Get().
-			AbsPath("/apis/" + goApi).
-			DoRaw(context.TODO()); err != nil {
-			fmt.Println("Could not find go CRD:", err)
+			AbsPath("/apis/" + pulp.newApi).
+			DoRaw(ctx); err != nil {
+			fmt.Println("Waiting for new CRD be created ... :", err)
 			time.Sleep(time.Second * 5)
 		} else {
 			fmt.Println("CRD:", string(data))
@@ -507,16 +499,16 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 		}
 	}
 
-	if retries == 10 {
+	if tried == 10 {
 		fmt.Println("ERROR! Golang CRD not found!")
 		return
 	}
 
 	_, err = clientset.RESTClient().
 		Post().
-		AbsPath("/apis/" + goApi + "/namespaces/" + namespace + "/" + goKind).
+		AbsPath("/apis/" + pulp.newApi + "/namespaces/" + pulp.newSubscriptionNamespace + "/" + pulp.newResource).
 		Body(body).
-		DoRaw(context.TODO())
+		DoRaw(ctx)
 
 	if err != nil {
 		fmt.Println("Failed to create new Pulp CR:", err)
@@ -527,7 +519,91 @@ func (ansiblePulp pulp) convert(clientset *kubernetes.Clientset) {
 func main() {
 	config := ctrl.GetConfigOrDie()
 	clientset := kubernetes.NewForConfigOrDie(config)
-	ansiblePulp := pulp{}
+
+	// required variables
+	namespace := os.Getenv("PULP_NAMESPACE")
+	if namespace == "" {
+		fmt.Println("Missing definition of PULP_NAMESPACE env var!")
+		return
+	}
+	oldResourceName := os.Getenv("PULP_RESOURCE_NAME")
+	if oldResourceName == "" {
+		fmt.Println("Missing definition of PULP_RESOURCE_NAME")
+		return
+	}
+	newResourceName := os.Getenv("NEW_PULP_RESOURCE_NAME")
+	if newResourceName == "" {
+		newResourceName = oldResourceName
+	}
+
+	// variables default values
+	oldSubscriptionName := os.Getenv("PULP_SUBSCRIPTION_NAME")
+	if oldSubscriptionName == "" {
+		oldSubscriptionName = "pulp-operator"
+	}
+	newSubscriptionName := os.Getenv("NEW_PULP_SUBSCRIPTION_NAME")
+	if newSubscriptionName == "" {
+		newSubscriptionName = oldSubscriptionName
+	}
+	newSubscriptionChannel := os.Getenv("NEW_SUBSCRIPTION_CHANNEL")
+	if newSubscriptionChannel == "" {
+		newSubscriptionChannel = "beta"
+	}
+	newSubscriptionInstallPlanApproval := os.Getenv("NEW_SUBSCRIPTION_INSTALL_PLAN_APPROVAL")
+	if newSubscriptionInstallPlanApproval == "" {
+		newSubscriptionInstallPlanApproval = "Automatic"
+	}
+	newSubscriptionSource := os.Getenv("NEW_SUBSCRIPTION_SOURCE")
+	if newSubscriptionSource == "" {
+		newSubscriptionSource = "community-operators"
+	}
+	newSubscriptionSourceNamespace := os.Getenv("NEW_SUBSCRIPTION_SOURCE_NAMESPACE")
+	if newSubscriptionSourceNamespace == "" {
+		newSubscriptionSourceNamespace = "openshift-marketplace"
+	}
+	newSubscriptionStartingCSV := os.Getenv("NEW_SUBSCRIPTION_STARTING_CSV")
+	if newSubscriptionStartingCSV == "" {
+		newSubscriptionStartingCSV = "pulp-operator.v1.0.0-alpha.4"
+	}
+	newApi := os.Getenv("NEW_PULP_API")
+	if newApi == "" {
+		newApi = "repo-manager.pulpproject.org/v1alpha1"
+	}
+	oldApi := os.Getenv("PULP_API")
+	if oldApi == "" {
+		oldApi = "/apis/pulp.pulpproject.org/v1beta1"
+	}
+	newKind := os.Getenv("NEW_PULP_KIND")
+	if newKind == "" {
+		newKind = "Pulp"
+	}
+	oldResource := os.Getenv("PULP_RESOURCE")
+	if oldResource == "" {
+		oldResource = "pulps"
+	}
+	newResource := os.Getenv("NEW_PULP_RESOURCE")
+	if newResource == "" {
+		newResource = oldResource
+	}
+
+	ansiblePulp := pulp{
+		oldSubscriptionName:                oldSubscriptionName,
+		oldSubscriptionNamespace:           namespace,
+		newSubscriptionNamespace:           namespace,
+		newSubscriptionName:                newSubscriptionName,
+		newSubscriptionChannel:             newSubscriptionChannel,
+		newSubscriptionInstallPlanApproval: newSubscriptionInstallPlanApproval,
+		newSubscriptionSource:              newSubscriptionSource,
+		newSubscriptionSourceNamespace:     newSubscriptionSourceNamespace,
+		newSubscriptionStartingCSV:         newSubscriptionStartingCSV,
+		newApi:                             newApi,
+		newKind:                            newKind,
+		newResourceName:                    newResourceName,
+		newResource:                        newResource,
+		oldApi:                             oldApi,
+		oldResource:                        oldResource,
+		oldResourceName:                    oldResourceName,
+	}
 
 	csvName, err := ansiblePulp.getCurrentCSV(clientset)
 	if err != nil {
@@ -542,7 +618,7 @@ func main() {
 		return
 	}
 
-	if err := deleteDeployments(clientset); err != nil {
+	if err := ansiblePulp.deleteDeployments(clientset); err != nil {
 		return
 	}
 

@@ -31,6 +31,37 @@ spec:
     spec:
       containers:
       - name: migrator
+        env:
+        - name: PULP_NAMESPACE
+          value: $PULP_NAMESPACE
+        - name: PULP_RESOURCE_NAME
+          value: $PULP_RESOURCE_NAME
+        - name: NEW_PULP_RESOURCE_NAME
+          value: $NEW_PULP_RESOURCE_NAME
+        - name: PULP_SUBSCRIPTION_NAME
+          value: $PULP_SUBSCRIPTION_NAME
+        - name: NEW_PULP_SUBSCRIPTION_NAME
+          value: $NEW_PULP_SUBSCRIPTION_NAME
+        - name: NEW_SUBSCRIPTION_CHANNEL
+          value: $NEW_SUBSCRIPTION_CHANNEL
+        - name: NEW_SUBSCRIPTION_INSTALL_PLAN_APPROVAL
+          value: $NEW_SUBSCRIPTION_INSTALL_PLAN_APPROVAL
+        - name: NEW_SUBSCRIPTION_SOURCE
+          value: $NEW_SUBSCRIPTION_SOURCE
+        - name: NEW_SUBSCRIPTION_SOURCE_NAMESPACE
+          value: $NEW_SUBSCRIPTION_SOURCE_NAMESPACE
+        - name: NEW_SUBSCRIPTION_STARTING_CSV
+          value: $NEW_SUBSCRIPTION_STARTING_CSV
+        - name: NEW_PULP_API
+          value: $NEW_PULP_API
+        - name: PULP_API
+          value: $PULP_API
+        - name: NEW_PULP_KIND
+          value: $NEW_PULP_KIND
+        - name: PULP_RESOURCE
+          value: $PULP_RESOURCE
+        - name: NEW_PULP_RESOURCE
+          value: $NEW_PULP_RESOURCE
         image: quay.io/rhn_support_hyagi/pulp-migrator
       restartPolicy: Never
       serviceAccount: migrator

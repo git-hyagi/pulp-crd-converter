@@ -8,7 +8,9 @@ Apply `migrator-job.yaml` to:
 * since we need to delete/recreate a `subscription` we will use a `cluster-admin` clusterrole
 * create the job that will run the migration
 ```
-oc apply -f migrator-job.yaml
+export PULP_RESOURCE_NAME=example-pulp
+export PULP_NAMESPACE=pulp
+envsubst < migrator-job.yaml |oc apply -f-
 ```
 
 * when the migration finishes, we can remove the clusterrole from `serviceAccount` and delete it
@@ -16,5 +18,3 @@ oc apply -f migrator-job.yaml
 oc adm policy remove-cluster-role-from-user cluster-admin -z migrator
 oc delete sa migrator
 ```
-
-
