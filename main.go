@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -28,9 +29,11 @@ type pulp struct {
 	Spec       AnsibleSpec       `json:"spec"`
 	Status     any               `json:"status"`
 
+	// ansible subscription data
 	oldSubscriptionName      string
 	oldSubscriptionNamespace string
 
+	// go subscription data
 	newSubscriptionNamespace           string
 	newSubscriptionName                string
 	newSubscriptionChannel             string
@@ -39,6 +42,7 @@ type pulp struct {
 	newSubscriptionSourceNamespace     string
 	newSubscriptionStartingCSV         string
 
+	// CRD data
 	oldApi          string
 	oldResource     string
 	oldResourceName string
@@ -46,6 +50,9 @@ type pulp struct {
 	newKind         string
 	newResourceName string
 	newResource     string
+	oldDBPVC        string
+	oldDBSVC        string
+	oldDBSts        string
 }
 
 type AnsibleSpec struct {
@@ -166,8 +173,83 @@ type Worker struct {
 	Strategy             *appsv1.DeploymentStrategy   `json:"strategy,omitempty"`
 }
 
+func (pulp *pulp) getCurrentDBPVC(clientset *kubernetes.Clientset) error {
+	fmt.Println("🔎 Retrieving the current Database PVC ...")
+	data, err := clientset.RESTClient().
+		Get().
+		AbsPath("/api/v1").
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource("persistentvolumeclaims").
+		Param("labelSelector", "app.kubernetes.io/component=database,app.kubernetes.io/managed-by="+pulp.oldSubscriptionName).
+		DoRaw(context.TODO())
+	if err != nil {
+		fmt.Println("❌ Failed to find Database PVC:", err)
+		return err
+	}
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	json.Unmarshal(data, pvcList)
+	if len(pvcList.Items) >= 1 {
+		pulp.oldDBPVC = pvcList.Items[0].ObjectMeta.Name
+		fmt.Println("Migrator will use the following PVC to the database pods:", pvcList.Items[0].ObjectMeta.Name)
+	}
+
+	return nil
+}
+
+func (pulp *pulp) getCurrentDBService(clientset *kubernetes.Clientset) error {
+	fmt.Println("🔎 Retrieving the current Database Service ...")
+	data, err := clientset.RESTClient().
+		Get().
+		AbsPath("/api/v1").
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource("services").
+		Param("labelSelector", "app.kubernetes.io/component=database,app.kubernetes.io/managed-by="+pulp.oldSubscriptionName).
+		DoRaw(context.TODO())
+	if err != nil {
+		fmt.Println("❌ Failed to find Database Service:", err)
+		return err
+	}
+	svcList := &corev1.ServiceList{}
+	json.Unmarshal(data, svcList)
+	if len(svcList.Items) >= 1 {
+		pulp.oldDBSVC = svcList.Items[0].ObjectMeta.Name
+		fmt.Println("Migrator will use the following SVC to the database pods:", svcList.Items[0].ObjectMeta.Name)
+	} else {
+		fmt.Println("❌ Failed to find Database Service")
+		return fmt.Errorf("database Service not found")
+	}
+
+	return nil
+}
+
+func (pulp *pulp) getCurrentDBSts(clientset *kubernetes.Clientset) error {
+	fmt.Println("🔎 Retrieving the current Database StatefulSet ...")
+	data, err := clientset.RESTClient().
+		Get().
+		AbsPath("/apis/apps/v1").
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource("statefulsets").
+		Param("labelSelector", "app.kubernetes.io/component=database,app.kubernetes.io/managed-by="+pulp.oldSubscriptionName).
+		DoRaw(context.TODO())
+	if err != nil {
+		fmt.Println("❌ Failed to find Database Service:", err)
+		return err
+	}
+	stsList := &appsv1.StatefulSetList{}
+	json.Unmarshal(data, stsList)
+	if len(stsList.Items) >= 1 {
+		pulp.oldDBSts = stsList.Items[0].ObjectMeta.Name
+		fmt.Println("Migrator will downscale the following StatefulSet to 0 replica pods:", stsList.Items[0].ObjectMeta.Name)
+	} else {
+		fmt.Println("❌ Failed to find Database StatefulSet")
+		return fmt.Errorf("database StatefulSet not found")
+	}
+
+	return nil
+}
+
 func (pulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) {
-	fmt.Println("Retrieving the current csv from subscription" + pulp.oldSubscriptionName + "...")
+	fmt.Println("🔎 Retrieving the current csv from subscription", pulp.oldSubscriptionName, "...")
 	data, err := clientset.RESTClient().
 		Get().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
@@ -176,7 +258,7 @@ func (pulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) 
 		Name(pulp.oldSubscriptionName).
 		DoRaw(context.TODO())
 	if err != nil {
-		fmt.Println("Failed to find Subscription:", err)
+		fmt.Println("❌ Failed to find Subscription:", err)
 		return "", err
 	}
 	sub := &operatorsv1alpha1.Subscription{}
@@ -187,7 +269,7 @@ func (pulp pulp) getCurrentCSV(clientset *kubernetes.Clientset) (string, error) 
 }
 
 func (pulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
-	fmt.Println("Deleting" + pulp.oldSubscriptionName + "subscription ...")
+	fmt.Println("🗑️  Deleting", pulp.oldSubscriptionName, "subscription ...")
 	data, err := clientset.RESTClient().
 		Delete().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
@@ -196,7 +278,7 @@ func (pulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
 		Name(pulp.oldSubscriptionName).
 		DoRaw(context.TODO())
 	if err != nil {
-		fmt.Println("Failed to find Subscription:", err)
+		fmt.Println("❌ Failed to find Subscription:", err)
 		return err
 	}
 
@@ -205,7 +287,7 @@ func (pulp pulp) deleteSubscription(clientset *kubernetes.Clientset) error {
 }
 
 func (pulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) error {
-	fmt.Println("Deleting" + csvName + "CSV ...")
+	fmt.Println("🗑️  Deleting", csvName, "CSV ...")
 	data, err := clientset.RESTClient().
 		Delete().
 		AbsPath("/apis/operators.coreos.com/v1alpha1").
@@ -214,11 +296,55 @@ func (pulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) erro
 		Name(csvName).
 		DoRaw(context.TODO())
 	if err != nil {
-		fmt.Println("Failed to find Subscription:", err)
+		fmt.Println("❌ Failed to find Subscription:", err)
 		return err
 	}
 
 	fmt.Println(string(data))
+	return nil
+}
+
+func (pulp *pulp) updateDBService(clientset *kubernetes.Clientset) error {
+	fmt.Println("Updating " + pulp.oldDBSVC + " Database Service ...")
+
+	// remove old label selectors
+	labels := []string{"app.kubernetes.io/instance", "app.kubernetes.io/component", "app.kubernetes.io/managed-by", "app.kubernetes.io/name", "app.kubernetes.io/part-of", "app.kubernetes.io/version"}
+	for _, label := range labels {
+		_, err := clientset.RESTClient().
+			Patch(types.MergePatchType).
+			AbsPath("/api/v1").
+			Namespace(pulp.oldSubscriptionNamespace).
+			Resource("services").
+			Name(pulp.oldDBSVC).
+			Param("fieldManager", "kubectl-label").
+			Body([]byte(`{"spec":{"selector":{"` + label + `":null}}}`)).
+			DoRaw(context.TODO())
+		if err != nil {
+			fmt.Println("❌ Failed to remove old labels from Database Service:", err)
+			return err
+		}
+	}
+
+	// configure the selector for the new DB pods
+	newLabels := map[string]string{
+		"app":     "postgresql",
+		"pulp_cr": pulp.newResourceName,
+	}
+	for k, v := range newLabels {
+		_, err := clientset.RESTClient().
+			Patch(types.MergePatchType).
+			AbsPath("/api/v1").
+			Namespace(pulp.oldSubscriptionNamespace).
+			Resource("services").
+			Name(pulp.oldDBSVC).
+			Param("fieldManager", "kubectl-label").
+			Body([]byte(`{"spec":{"selector":{"` + k + `":"` + v + `"}}}`)).
+			DoRaw(context.TODO())
+		if err != nil {
+			fmt.Println("❌ Failed to add new labels to the Database Service:", err)
+			return err
+		}
+	}
 	return nil
 }
 
@@ -244,7 +370,7 @@ func (pulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 	}
 	body, err := json.Marshal(newSubscription)
 	if err != nil {
-		fmt.Println("Failed to serialize new Pulp CR:", err)
+		fmt.Println("❌ Failed to serialize new Pulp CR:", err)
 		return err
 	}
 	fmt.Println(string(body))
@@ -258,7 +384,7 @@ func (pulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 		Body(body).
 		DoRaw(context.TODO())
 	if err != nil {
-		fmt.Println("Failed to create Subscription:", err)
+		fmt.Println("❌ Failed to create Subscription:", err)
 		return err
 	}
 
@@ -278,16 +404,33 @@ func (pulp pulp) deleteDeployments(clientset *kubernetes.Clientset) error {
 			Param("labelSelector", "app.kubernetes.io/component="+component).
 			DoRaw(context.TODO())
 		if err != nil {
-			fmt.Println("Failed to find", component, "deployment:", err)
+			fmt.Println("❌ Failed to find", component, "deployment:", err)
 			return err
 		} else {
-			fmt.Println("Deleting", component, "deployment ...")
+			fmt.Println("🗑️  Deleting", component, "deployment ...")
 		}
 	}
 	return nil
 }
 
-func (pulp pulp) convert(clientset *kubernetes.Clientset) {
+func (pulp pulp) downscaleDBReplicas(clientset *kubernetes.Clientset) error {
+	fmt.Println("Scaling old Database STS to 0 replicas ...")
+	if _, err := clientset.RESTClient().
+		Patch(types.MergePatchType).
+		AbsPath("/apis/apps/v1").
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource("statefulsets").
+		Name(pulp.oldDBSts).
+		Suffix("scale").
+		Body([]byte(`{"spec":{"replicas":0}}`)).
+		DoRaw(context.TODO()); err != nil {
+		fmt.Println("❌ Failed to set "+pulp.oldDBSts+" STS to 0 replicas:", err)
+		return err
+	}
+	return nil
+}
+
+func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 	ctx := context.TODO()
 
 	fmt.Println("Converting Pulp CR to the new CRD ...")
@@ -300,8 +443,8 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 		DoRaw(ctx)
 
 	if err != nil {
-		fmt.Println("Failed to find old Pulp CR:", err)
-		return
+		fmt.Println("❌ Failed to find old Pulp CR:", err)
+		return err
 	}
 
 	json.Unmarshal(data, &pulp)
@@ -451,13 +594,13 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 				PostgresStorageClass:        pulp.Spec.PostgresStorageClass,
 				ReadinessProbe:              nil,
 				LivenessProbe:               nil,
+				PVC:                         pulp.oldDBPVC,
 				//ExternalDBSecret: "",
 				//PostgresVersion: "",
 				//PostgresPort: 5432,
 				//PostgresSSLMode: "prefer",
 				//NodeSelector:           pulp.Spec.PostgresSelector,
 				//Tolerations: pulp.Spec.PostgresToleration,
-				//PVC:          "",
 			},
 			Cache: repomanagerv1alpha1.Cache{
 				RedisImage:                pulp.Spec.RedisImage,
@@ -478,8 +621,8 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 	}
 	body, err := json.Marshal(pulpNew)
 	if err != nil {
-		fmt.Println("Failed to serialize new Pulp CR:", err)
-		return
+		fmt.Println("❌ Failed to serialize new Pulp CR:", err)
+		return err
 	}
 
 	fmt.Println("Create new CR:", string(body))
@@ -500,8 +643,8 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 	}
 
 	if tried == 10 {
-		fmt.Println("ERROR! Golang CRD not found!")
-		return
+		fmt.Println("❌ ERROR! Golang CRD not found!")
+		return err
 	}
 
 	_, err = clientset.RESTClient().
@@ -511,9 +654,10 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) {
 		DoRaw(ctx)
 
 	if err != nil {
-		fmt.Println("Failed to create new Pulp CR:", err)
-		return
+		fmt.Println("❌ Failed to create new Pulp CR:", err)
+		return err
 	}
+	return nil
 }
 
 func main() {
@@ -605,6 +749,18 @@ func main() {
 		oldResourceName:                    oldResourceName,
 	}
 
+	if err := (&ansiblePulp).getCurrentDBPVC(clientset); err != nil {
+		return
+	}
+
+	if err := (&ansiblePulp).getCurrentDBService(clientset); err != nil {
+		return
+	}
+
+	if err := (&ansiblePulp).getCurrentDBSts(clientset); err != nil {
+		return
+	}
+
 	csvName, err := ansiblePulp.getCurrentCSV(clientset)
 	if err != nil {
 		return
@@ -622,9 +778,22 @@ func main() {
 		return
 	}
 
+	if err := ansiblePulp.downscaleDBReplicas(clientset); err != nil {
+		return
+	}
+
+	if err := ansiblePulp.updateDBService(clientset); err != nil {
+		return
+	}
+
 	if err := ansiblePulp.subscribe(clientset); err != nil {
 		return
 	}
 
-	ansiblePulp.convert(clientset)
+	if err := ansiblePulp.convert(clientset); err != nil {
+		return
+	} else {
+		fmt.Println("✅ Migration finished")
+	}
+
 }
