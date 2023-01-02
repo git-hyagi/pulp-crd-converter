@@ -492,6 +492,22 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 		imagePullSecrets = append(imagePullSecrets, pulp.Spec.ImagePullSecret)
 	}
 
+	pulpPVC := ""
+	if len(pulp.Spec.ObjectStorageAzureSecret) == 0 && len(pulp.Spec.ObjectStorageS3Secret) == 0 {
+		pulpPVC = pulp.oldResourceName + "-file-storage"
+	}
+	redisPVC := pulp.oldResourceName + "-redis-data"
+
+	// Defining file_storage_class as "" to avoid conflict with pvc definition.
+	// In go version we are verifying multiple storage definitions,
+	// in ansible, when none of s3 or azure blob secrets are provided, the operator
+	// will provision a PVC. If a SC is provided, it will define the PVC spec with it,
+	// if not, no SC will be defined and k8s will try to use an available PV that fits
+	// the spec of the PVC.
+	fileStorageClass := ""
+	cacheStorageClass := ""
+	dbStorageClass := (*string)(nil)
+
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: pulp.newApi,
@@ -505,7 +521,8 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 			DeploymentType:           pulp.Spec.DeploymentType,
 			FileStorageSize:          pulp.Spec.FileStorageSize,
 			FileStorageAccessMode:    pulp.Spec.FileStorageAccessMode,
-			FileStorageClass:         pulp.Spec.FileStorageClass,
+			FileStorageClass:         fileStorageClass,
+			PVC:                      pulpPVC,
 			ObjectStorageAzureSecret: pulp.Spec.ObjectStorageAzureSecret,
 			ObjectStorageS3Secret:    pulp.Spec.ObjectStorageS3Secret,
 			DBFieldsEncryptionSecret: pulp.Spec.DBFieldsEncryptionSecret,
@@ -591,7 +608,7 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 				PostgresHostAuthMethod:      pulp.Spec.PostgresHostAuthMethod,
 				ResourceRequirements:        dbResources,
 				PostgresStorageRequirements: pulp.Spec.PostgresStorageRequirements,
-				PostgresStorageClass:        pulp.Spec.PostgresStorageClass,
+				PostgresStorageClass:        dbStorageClass,
 				ReadinessProbe:              nil,
 				LivenessProbe:               nil,
 				PVC:                         pulp.oldDBPVC,
@@ -604,7 +621,7 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 			},
 			Cache: repomanagerv1alpha1.Cache{
 				RedisImage:                pulp.Spec.RedisImage,
-				RedisStorageClass:         pulp.Spec.RedisStorageClass,
+				RedisStorageClass:         cacheStorageClass,
 				RedisResourceRequirements: pulp.Spec.RedisResourceRequirements,
 				ReadinessProbe:            nil,
 				LivenessProbe:             nil,
@@ -612,10 +629,10 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 				Tolerations:               nil,
 				NodeSelector:              nil,
 				Strategy:                  cacheStrategy,
+				PVC:                       redisPVC,
 				//ExternalCacheSecret: "",
 				//Enabled: true,
 				//RedisPort: 6379,
-				//PVC: "",
 			},
 		},
 	}

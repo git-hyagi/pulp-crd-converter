@@ -1,5 +1,5 @@
 # ABOUT
-This is a simple program to make the migration of [Pulp Operator](https://docs.pulpproject.org/pulp_operator/) from [Ansible](https://github.com/pulp/pulp-operator/tree/ansible) to [Golang](https://github.com/pulp/pulp-operator/tree/main) easier.
+This is a simple program to make the migration of [Pulp Operator](https://docs.pulpproject.org/pulp_operator/) installations made through [OLM](https://operatorhub.io/about#How-does-OperatorHub.io-work?) from [Ansible](https://github.com/pulp/pulp-operator/tree/ansible) to [Golang](https://github.com/pulp/pulp-operator/tree/main) easier.
 
 
 # RUNNING
