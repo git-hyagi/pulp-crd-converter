@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -393,7 +394,7 @@ func (pulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 }
 
 func (pulp pulp) deleteDeployments(clientset *kubernetes.Clientset) error {
-	components := []string{"api", "content-server", "worker", "webserver"}
+	components := []string{"api", "content-server", "worker", "webserver", "cache"}
 
 	for _, component := range components {
 		_, err := clientset.RESTClient().
@@ -508,6 +509,11 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 	cacheStorageClass := ""
 	dbStorageClass := (*string)(nil)
 
+	deploymentType := "pulp"
+	if isGalaxy, _ := regexp.MatchString(".*galaxy.*", pulp.Spec.Image); isGalaxy {
+		deploymentType = "galaxy"
+	}
+
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: pulp.newApi,
@@ -518,7 +524,7 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 			Namespace: pulp.newSubscriptionNamespace,
 		},
 		Spec: repomanagerv1alpha1.PulpSpec{
-			DeploymentType:           pulp.Spec.DeploymentType,
+			DeploymentType:           deploymentType,
 			FileStorageSize:          pulp.Spec.FileStorageSize,
 			FileStorageAccessMode:    pulp.Spec.FileStorageAccessMode,
 			FileStorageClass:         fileStorageClass,
