@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -512,10 +511,26 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 	cacheStorageClass := ""
 	dbStorageClass := (*string)(nil)
 
-	deploymentType := "pulp"
+	// Rolling back this
+	/*
+		It is possible to set deployment_type: pulp, but deploy galaxy images (which is the default behavior, in both operators, when deployment_type is not provided).
+		The readiness and liveness probe from postgres sts is defined with a user based on deployment_type.
+		This is causing the following error when running migrator:
+		2023-01-03 18:24:06.002 UTC [456] FATAL:  password authentication failed for user "galaxy"
+		2023-01-03 18:24:06.002 UTC [456] DETAIL:  Role "galaxy" does not exist.
+				Connection matched pg_hba.conf line 90: "host	all         	all         	127.0.0.1/32        	scram-sha-256"
+		2023-01-03 18:24:15.990 UTC [474] FATAL:  password authentication failed for user "galaxy"
+		2023-01-03 18:24:15.990 UTC [474] DETAIL:  Role "galaxy" does not exist.
+				Connection matched pg_hba.conf line 90: "host	all         	all         	127.0.0.1/32        	scram-sha-256"
+		2023-01-03 18:24:16.002 UTC [475] FATAL:  password authentication failed for user "galaxy"
+		2023-01-03 18:24:16.002 UTC [475] DETAIL:  Role "galaxy" does not exist.
+				Connection matched pg_hba.conf line 90: "host	all         	all         	127.0.0.1/32        	scram-sha-256"
+	*/
+	/* deploymentType := "pulp"
 	if isGalaxy, _ := regexp.MatchString(".*galaxy.*", pulp.Spec.Image); isGalaxy {
 		deploymentType = "galaxy"
-	}
+	} */
+	deploymentType := pulp.Spec.DeploymentType
 
 	routeHost := pulp.Spec.RouteHost
 	if pulp.Spec.IngressType == "route" && len(pulp.Spec.RouteHost) == 0 {
@@ -739,7 +754,7 @@ func main() {
 	}
 	newSubscriptionStartingCSV := os.Getenv("NEW_SUBSCRIPTION_STARTING_CSV")
 	if newSubscriptionStartingCSV == "" {
-		newSubscriptionStartingCSV = "pulp-operator.v1.0.0-alpha.4"
+		newSubscriptionStartingCSV = "pulp-operator.v1.0.0-alpha.5"
 	}
 	newApi := os.Getenv("NEW_PULP_API")
 	if newApi == "" {
