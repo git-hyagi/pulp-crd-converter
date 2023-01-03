@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	repomanagerv1alpha1 "github.com/pulp/pulp-operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -305,6 +306,44 @@ func (pulp pulp) deleteCSV(clientset *kubernetes.Clientset, csvName string) erro
 	return nil
 }
 
+func (pulp pulp) deleteDeployments(clientset *kubernetes.Clientset) error {
+	components := []string{"api", "content-server", "worker", "webserver", "cache"}
+
+	for _, component := range components {
+		_, err := clientset.RESTClient().
+			Delete().
+			AbsPath("/apis/apps/v1").
+			Namespace(pulp.oldSubscriptionNamespace).
+			Resource("deployments").
+			Param("labelSelector", "app.kubernetes.io/component="+component).
+			DoRaw(context.TODO())
+		if err != nil {
+			fmt.Println("❌ Failed to find", component, "deployment:", err)
+			return err
+		} else {
+			fmt.Println("🗑️  Deleting", component, "deployment ...")
+		}
+	}
+	return nil
+}
+
+func (pulp pulp) downscaleDBReplicas(clientset *kubernetes.Clientset) error {
+	fmt.Println("Scaling old Database STS to 0 replicas ...")
+	if _, err := clientset.RESTClient().
+		Patch(types.MergePatchType).
+		AbsPath("/apis/apps/v1").
+		Namespace(pulp.oldSubscriptionNamespace).
+		Resource("statefulsets").
+		Name(pulp.oldDBSts).
+		Suffix("scale").
+		Body([]byte(`{"spec":{"replicas":0}}`)).
+		DoRaw(context.TODO()); err != nil {
+		fmt.Println("❌ Failed to set "+pulp.oldDBSts+" STS to 0 replicas:", err)
+		return err
+	}
+	return nil
+}
+
 func (pulp *pulp) updateDBService(clientset *kubernetes.Clientset) error {
 	fmt.Println("Updating " + pulp.oldDBSVC + " Database Service ...")
 
@@ -393,44 +432,6 @@ func (pulp pulp) subscribe(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-func (pulp pulp) deleteDeployments(clientset *kubernetes.Clientset) error {
-	components := []string{"api", "content-server", "worker", "webserver", "cache"}
-
-	for _, component := range components {
-		_, err := clientset.RESTClient().
-			Delete().
-			AbsPath("/apis/apps/v1").
-			Namespace(pulp.oldSubscriptionNamespace).
-			Resource("deployments").
-			Param("labelSelector", "app.kubernetes.io/component="+component).
-			DoRaw(context.TODO())
-		if err != nil {
-			fmt.Println("❌ Failed to find", component, "deployment:", err)
-			return err
-		} else {
-			fmt.Println("🗑️  Deleting", component, "deployment ...")
-		}
-	}
-	return nil
-}
-
-func (pulp pulp) downscaleDBReplicas(clientset *kubernetes.Clientset) error {
-	fmt.Println("Scaling old Database STS to 0 replicas ...")
-	if _, err := clientset.RESTClient().
-		Patch(types.MergePatchType).
-		AbsPath("/apis/apps/v1").
-		Namespace(pulp.oldSubscriptionNamespace).
-		Resource("statefulsets").
-		Name(pulp.oldDBSts).
-		Suffix("scale").
-		Body([]byte(`{"spec":{"replicas":0}}`)).
-		DoRaw(context.TODO()); err != nil {
-		fmt.Println("❌ Failed to set "+pulp.oldDBSts+" STS to 0 replicas:", err)
-		return err
-	}
-	return nil
-}
-
 func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 	ctx := context.TODO()
 
@@ -514,6 +515,12 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 		deploymentType = "galaxy"
 	}
 
+	routeHost := pulp.Spec.RouteHost
+	if pulp.Spec.IngressType == "route" && len(pulp.Spec.RouteHost) == 0 {
+		ingressDomain, _ := getDefaultIngressDomain(clientset)
+		routeHost = pulp.oldResourceName + "-" + pulp.oldSubscriptionNamespace + "." + ingressDomain
+	}
+
 	pulpNew := &repomanagerv1alpha1.Pulp{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: pulp.newApi,
@@ -538,7 +545,7 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 			IngressType:              pulp.Spec.IngressType,
 			IngressAnnotations:       pulp.Spec.IngressAnnotations,
 			IngressTLSSecret:         pulp.Spec.IngressTLSSecret,
-			RouteHost:                pulp.Spec.RouteHost,
+			RouteHost:                routeHost,
 			RouteTLSSecret:           pulp.Spec.RouteTLSSecret,
 			HAProxyTimeout:           pulp.Spec.HAProxyTimeout,
 			NginxMaxBodySize:         pulp.Spec.NginxMaxBodySize,
@@ -819,4 +826,20 @@ func main() {
 		fmt.Println("✅ Migration finished")
 	}
 
+}
+
+func getDefaultIngressDomain(clientset *kubernetes.Clientset) (string, error) {
+
+	defaultIngressDomain, err := clientset.RESTClient().
+		Get().
+		AbsPath("/apis/config.openshift.io/v1/ingresses/cluster").
+		DoRaw(context.TODO())
+	if err != nil {
+		fmt.Println("❌ Failed to find the cluster default ingress domain:", err)
+		return "", err
+	}
+
+	ingress := &configv1.Ingress{}
+	json.Unmarshal(defaultIngressDomain, ingress)
+	return ingress.Spec.Domain, nil
 }

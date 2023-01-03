@@ -3,6 +3,7 @@ module migrator
 go 1.18
 
 require (
+	github.com/openshift/api v0.0.0-20220825183227-75c111537c4d
 	github.com/pulp/pulp-operator v0.0.0-20221223034859-9426d3e059cc
 	k8s.io/api v0.26.0
 	k8s.io/apimachinery v0.26.0
