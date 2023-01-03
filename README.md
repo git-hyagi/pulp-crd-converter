@@ -26,6 +26,41 @@ oc adm policy remove-cluster-role-from-user cluster-admin -z migrator
 oc delete sa migrator
 ```
 
+# ROLLBACK
+To rollback the changes, just remove the resources created by `migrator` and, in case of any, from `go-based` version:
+```
+$ oc -npulp delete csv,sub -l operators.coreos.com/pulp-operator.pulp=
+$ oc -npulp delete deployments,svc,sts -l app.kubernetes.io/managed-by=<deployment type>-operator
+```
+
+Reinstall the ansible version of the operator, for example:
+```
+$ oc apply -f-<<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  labels:
+    operators.coreos.com/pulp-operator.pulp: ""
+  name: pulp-operator
+  namespace: pulp
+spec:
+  channel: alpha
+  installPlanApproval: Automatic
+  name: pulp-operator
+  source: pulp-operator-cs
+  sourceNamespace: openshift-marketplace
+  startingCSV: pulp-operator.v1.0.0-alpha
+EOF
+```
+> :blue_book: Since ansible version is not available in the operatorhub catalog anymore, to reinstall it through OLM we need to create a custom catalogsource with it: https://gist.github.com/git-hyagi/00de7b25e2f935b83ea91969cc24eea1
+
+It is also possible to reinstall it using `make deploy`:
+```
+$ git clone -b ansible git@github.com:pulp/pulp-operator.git
+$ cd pulp-operator
+$ make deploy NAMESPACE=pulp
+```
+
 
 # WHAT DOES IT DO?
 

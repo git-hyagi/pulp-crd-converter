@@ -78,7 +78,6 @@ type AnsibleSpec struct {
 	ImageVersion                 string                       `json:"image_version,omitempty"`
 	ImageWeb                     string                       `json:"image_web,omitempty"`
 	ImageWebVersion              string                       `json:"image_web_version,omitempty"`
-	IngressAnnotations           map[string]string            `json:"ingress_annotations,omitempty"`
 	IngressTLSSecret             string                       `json:"ingress_tls_secret,omitempty"`
 	IngressType                  string                       `json:"ingress_type,omitempty"`
 	NginxMaxBodySize             string                       `json:"nginx_client_max_body_size,omitempty"`
@@ -113,6 +112,9 @@ type AnsibleSpec struct {
 	// these are defined as string in ansible (but I'll let it the same way as we defined in go)
 	Tolerations               []corev1.Toleration               `json:"tolerations,omitempty"`
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topology_spread_constraints,omitempty"`
+
+	// ansible version define this as string
+	IngressAnnotations map[string]string `json:"ingress_annotations,omitempty"`
 
 	// this is defined as map[string]string in golang
 	NodeSelector string `json:"node_selector,omitempty"`
