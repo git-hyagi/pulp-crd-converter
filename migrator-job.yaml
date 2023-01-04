@@ -62,6 +62,8 @@ spec:
           value: $PULP_RESOURCE
         - name: NEW_PULP_RESOURCE
           value: $NEW_PULP_RESOURCE
+        - name: CONVERTION_ONLY
+          value: "$CONVERTION_ONLY"
         image: quay.io/rhn_support_hyagi/pulp-migrator
       restartPolicy: Never
       serviceAccount: migrator

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -439,7 +440,7 @@ func (pulp pulp) convert(clientset *kubernetes.Clientset) error {
 	fmt.Println("Converting Pulp CR to the new CRD ...")
 	data, err := clientset.RESTClient().
 		Get().
-		AbsPath(pulp.oldApi).
+		AbsPath("/apis/" + pulp.oldApi).
 		Namespace(pulp.oldSubscriptionNamespace).
 		Resource(pulp.oldResource).
 		Name(pulp.oldResourceName).
@@ -711,6 +712,12 @@ func main() {
 	config := ctrl.GetConfigOrDie()
 	clientset := kubernetes.NewForConfigOrDie(config)
 
+	// control var to run only convertion method
+	runOnlyConvertion := false
+	if strings.ToLower(os.Getenv("CONVERTION_ONLY")) == "true" {
+		runOnlyConvertion = true
+	}
+
 	// required variables
 	namespace := os.Getenv("PULP_NAMESPACE")
 	if namespace == "" {
@@ -762,7 +769,7 @@ func main() {
 	}
 	oldApi := os.Getenv("PULP_API")
 	if oldApi == "" {
-		oldApi = "/apis/pulp.pulpproject.org/v1beta1"
+		oldApi = "pulp.pulpproject.org/v1beta1"
 	}
 	newKind := os.Getenv("NEW_PULP_KIND")
 	if newKind == "" {
@@ -800,41 +807,43 @@ func main() {
 		return
 	}
 
-	if err := (&ansiblePulp).getCurrentDBService(clientset); err != nil {
-		return
-	}
+	if !runOnlyConvertion {
+		if err := (&ansiblePulp).getCurrentDBService(clientset); err != nil {
+			return
+		}
 
-	if err := (&ansiblePulp).getCurrentDBSts(clientset); err != nil {
-		return
-	}
+		if err := (&ansiblePulp).getCurrentDBSts(clientset); err != nil {
+			return
+		}
 
-	csvName, err := ansiblePulp.getCurrentCSV(clientset)
-	if err != nil {
-		return
-	}
+		csvName, err := ansiblePulp.getCurrentCSV(clientset)
+		if err != nil {
+			return
+		}
 
-	if err := ansiblePulp.deleteSubscription(clientset); err != nil {
-		return
-	}
+		if err := ansiblePulp.deleteSubscription(clientset); err != nil {
+			return
+		}
 
-	if err := ansiblePulp.deleteCSV(clientset, csvName); err != nil {
-		return
-	}
+		if err := ansiblePulp.deleteCSV(clientset, csvName); err != nil {
+			return
+		}
 
-	if err := ansiblePulp.deleteDeployments(clientset); err != nil {
-		return
-	}
+		if err := ansiblePulp.deleteDeployments(clientset); err != nil {
+			return
+		}
 
-	if err := ansiblePulp.downscaleDBReplicas(clientset); err != nil {
-		return
-	}
+		if err := ansiblePulp.downscaleDBReplicas(clientset); err != nil {
+			return
+		}
 
-	if err := ansiblePulp.updateDBService(clientset); err != nil {
-		return
-	}
+		if err := ansiblePulp.updateDBService(clientset); err != nil {
+			return
+		}
 
-	if err := ansiblePulp.subscribe(clientset); err != nil {
-		return
+		if err := ansiblePulp.subscribe(clientset); err != nil {
+			return
+		}
 	}
 
 	if err := ansiblePulp.convert(clientset); err != nil {

@@ -2,7 +2,7 @@
 This is a simple program to make the migration of [Pulp Operator](https://docs.pulpproject.org/pulp_operator/) installations made through [OLM](https://operatorhub.io/about#How-does-OperatorHub.io-work?) from [Ansible](https://github.com/pulp/pulp-operator/tree/ansible) to [Golang](https://github.com/pulp/pulp-operator/tree/main) easier.
 
 
-# RUNNING
+# QUICKSTART
 > :warning: MAKE SURE TO HAVE A BACKUP BEFORE PROCEEDING :warning:
 
 > :warning: MAKE SURE TO HAVE A BACKUP BEFORE PROCEEDING :warning:
@@ -25,6 +25,33 @@ envsubst < migrator-job.yaml |oc apply -f-
 oc adm policy remove-cluster-role-from-user cluster-admin -z migrator
 oc delete sa migrator
 ```
+
+# CONFIGURING
+
+All the configurations are made through environment variables.
+The `envsubst` command will fill the `migrator-job.yaml` with the values.
+
+| Env var | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| PULP_NAMESPACE | Namespace where Pulp Operator is installed. | string | true |
+| PULP_RESOURCE_NAME | Name of ansible operator's custom resource. Can be retrieved through: `oc get pulps.pulp` | string | true |
+| NEW_PULP_RESOURCE_NAME | Name of the golang operator's custom resource. If not provided will use the same value as `PULP_RESOURCE_NAME`. | string | false |
+| PULP_SUBSCRIPTION_NAME | Name of ansible Pulp Operator subscription. Default: `pulp-operator` | string | false |
+| NEW_PULP_SUBSCRIPTION_NAME | Name of golang Pulp Operator subscription. If not provided will use the same value as `PULP_SUBSCRIPTION_NAME` | string | false |
+| NEW_SUBSCRIPTION_CHANNEL | Golang Operator subscription channel ("release version"). Default: `beta` | string | false |
+| NEW_SUBSCRIPTION_INSTALL_PLAN_APPROVAL | Approval is the user approval policy for an InstallPlan. It must be one of "Automatic" or "Manual". Default: `Automatic` | string | false |
+| NEW_SUBSCRIPTION_SOURCE | CatalogSource ("repository") of golang Operator. Default: `community-operators` | string | false |
+| NEW_SUBSCRIPTION_SOURCE_NAMESPACE | Namespace of CatalogSource ("repository") of golang Operator. Default: `openshift-marketplace` | string | false |
+| NEW_SUBSCRIPTION_STARTING_CSV | Version of golang Pulp Operator to install. Default: `pulp-operator.v1.0.0-alpha.5` | string | false |
+| NEW_PULP_API | Golang Pulp Operator APIVersion. Default: `repo-manager.pulpproject.org/v1alpha1` | string | false |
+| NEW_PULP_KIND | Golang Pulp Operator Kind. Default: `Pulp` | string | false |
+| PULP_RESOURCE | Ansible Pulp Operator Resource Type. Default: `pulps` | string | false |
+| NEW_PULP_RESOURCE | Golang Pulp Operator Resource Type. If not provided will use the same value as `PULP_RESOURCE` | string | false |
+| CONVERTION_ONLY | Define if the job should run only the convertion of Pulp CR from ansible to golang. Default: `false` | string | false |
+
+
+By default, the `migrator-job` will run a lot of [steps](#what-does-it-do), but it is also possible to instruct it to only run the convertion procedure by setting the `CONVERTION_ONLY` env var to `true`.  
+The convertion procedure will create a new `golang Pulp CR` with the data collected from `ansible Pulp CR`. In this case, all of the [other steps](#what-does-it-do) done by `migrator-job` should be run manually if needed.
 
 # ROLLBACK
 To rollback the changes, just remove the resources created by `migrator` and, in case of any, from `go-based` version:
@@ -69,6 +96,9 @@ $ make deploy NAMESPACE=pulp
 * with the above information it will delete the current Pulp operator subscription and csv associated with it
 * after that it will delete the current deployments, downscale database replicas, and update the database service to use the new database pods as endpoints
 * as a last step it will subscribe to the new operator version and migrate the current CR to match the new CRD specification
+
+> :blue_book: All `PVCs`, `Secrets`, and `ConfigMaps` will remain the same (they will **not**  be modified by `migrator`), which allows to do a rollback or **manually** retry a migration in case of failure.
+
 
 ```
 $ oc logs -f jobs/pulp-migrator
